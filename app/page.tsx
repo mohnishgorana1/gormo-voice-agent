@@ -10,13 +10,41 @@ const openai = new OpenAI({
 })
 
 function HomePage() {
-    const [status, setStatus] = useState<"READY" | "LISTENING" | "THINKING..." | "ERROR" | "UNSUPPORTED">("READY")
+    const [status, setStatus] = useState<"READY" | "LISTENING" | "THINKING..." | "ERROR" | "PROCESSING AUDIO" | "SPEAKING" | "UNSUPPORTED">("READY")
     const [transcript, setTranscript] = useState("")
     const [assistantResponse, setAssistantResponse] = useState<"" | string | null>("")
+    const [audioUrl, setAudioUrl] = useState<string | null>(null);
 
     const recognitionRef = useRef(null)
-    const timerRef = useRef<any>(null) // Naya ref silence timer ke liye
-    const transcriptRef = useRef("") // Naya ref latest transcript ko timer me bhejne ke liye
+    const timerRef = useRef<any>(null)
+    const transcriptRef = useRef("");
+
+    const speak = async (text: string) => {
+        setStatus("PROCESSING AUDIO");
+        try {
+            const response = await openai.audio.speech.create({
+                model: "tts-1",
+                voice: "alloy",
+                input: text
+            })
+            const audioBuffer = await response.arrayBuffer();
+            const blob = new Blob([audioBuffer], { type: "audio/mpeg" });
+            const url = URL.createObjectURL(blob);
+
+            setAudioUrl(url);
+
+            const audio = new Audio(url);
+
+            setStatus("SPEAKING");
+            audio.play();
+
+            audio.onended = () => {
+                setStatus("READY")
+            }
+        } catch {
+
+        }
+    }
 
     const processWithLLM = async (userInput: string) => {
         if (!userInput.trim()) return
@@ -30,9 +58,14 @@ function HomePage() {
                 messages: [{ role: "user", content: userInput }],
             })
 
-            const reply = completion.choices[0].message.content
-            setAssistantResponse(reply)
-            setStatus("READY")
+            const reply = completion.choices[0].message.content;
+
+            if (reply) {
+                setAssistantResponse(reply)
+                speak(reply)
+            } else {
+                setStatus("READY")
+            }
 
         } catch (error) {
             console.error("LLM Error:", error)
@@ -58,20 +91,18 @@ function HomePage() {
                 }
 
                 setTranscript(currentTranscript)
-                transcriptRef.current = currentTranscript // Har word par ref update karo
+                transcriptRef.current = currentTranscript 
 
-                // Purana timer clear karo agar user aur bol raha hai
                 if (timerRef.current) {
                     clearTimeout(timerRef.current)
                 }
 
-                // Naya 2-second ka timer lagao
                 timerRef.current = setTimeout(() => {
                     if (transcriptRef.current.trim()) {
-                        recognition.stop() // Mic band karo
-                        processWithLLM(transcriptRef.current) // LLM ko call karo
+                        recognition.stop() 
+                        processWithLLM(transcriptRef.current) 
                     }
-                }, 2000) // 2000 milliseconds = 2 seconds ki silence
+                }, 2000) 
             }
 
             recognition.onerror = (event: any) => {
@@ -96,7 +127,6 @@ function HomePage() {
             transcriptRef.current = ""
             setAssistantResponse("")
 
-            // Start karne se pehle purane timers hata do
             if (timerRef.current) clearTimeout(timerRef.current)
 
             recognitionRef.current.start()
@@ -114,8 +144,8 @@ function HomePage() {
     return (
         <div className="min-h-screen bg-zinc-950 text-white">
             <div className="max-w-7xl mx-auto px-6 py-4">
-
-                <main className="w-full mb-5 flex items-center justify-between ">
+                {/* HEADER */}
+                <header className="w-full mb-5 flex items-center justify-between ">
                     <div className="flex flex-col items-center justify-center">
                         <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
                             GORMO
@@ -124,11 +154,12 @@ function HomePage() {
                     </div>
 
                     <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 px-4 py-1.5 rounded-xl">
-                        <span className={`w-3 h-3 rounded-full ${status === 'LISTENING' ? 'bg-red-500 animate-pulse' : status === 'THINKING...' ? 'bg-yellow-500 animate-bounce' : 'bg-green-500'}`}></span>
+                        <span className={`w-3 h-3 rounded-full ${status === 'LISTENING' ? 'bg-red-500 animate-pulse' : status === 'THINKING...' || status === 'PROCESSING AUDIO' ? 'bg-yellow-500 animate-bounce' : status === 'SPEAKING' ? 'bg-purple-500 animate-pulse' : 'bg-green-500'}`}></span>
                         <span className="text-sm text-zinc-300">{status}</span>
                     </div>
-                </main>
+                </header>
 
+                {/* ACTION BTNS */}
                 <section className="flex justify-center gap-5 mb-10">
                     <motion.button
                         whileHover={{ scale: 1.05 }}
@@ -149,8 +180,9 @@ function HomePage() {
                     </motion.button>
                 </section>
 
-                <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <div className="lg:col-span-1">
+                <main className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    {/* left: user transcript */}
+                    <section className="lg:col-span-1">
                         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 h-full">
                             <h2 className="text-xl font-semibold mb-5">User Transcript</h2>
                             <div className="h-[550px] bg-zinc-950 rounded-xl p-4 overflow-y-auto border border-zinc-800">
@@ -159,24 +191,63 @@ function HomePage() {
                                 </p>
                             </div>
                         </div>
-                    </div>
-
-                    <div className="lg:col-span-2">
+                    </section>
+                    {/* right: assistant response */}
+                    <section className="lg:col-span-2">
                         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5">
                             <h2 className="text-xl font-semibold mb-5">Assistant Response</h2>
 
-                            <div className="border border-zinc-800 bg-zinc-950 rounded-xl h-24 flex items-center justify-center mb-5">
-                                <p className="text-zinc-500">Audio Player Component</p>
+                            {/* AUDIO PLAYER VISUALIZATION */}
+                            <div className="border border-zinc-800 bg-zinc-950 rounded-xl h-32 flex items-center justify-center mb-5 overflow-hidden relative">
+                                
+                                {/* Hidden Audio Tag for playback */}
+                                {audioUrl && <audio src={audioUrl} autoPlay className="hidden" />}
+
+                                {/* Visual Agent Component */}
+                                <div className="flex items-center justify-center">
+                                    {status === "SPEAKING" ? (
+                                        <div className="flex items-center gap-1.5 h-12">
+                                            {[...Array(5)].map((_, i) => (
+                                                <motion.div 
+                                                    key={i}
+                                                    animate={{ height: ["20%", "100%", "20%"] }} 
+                                                    transition={{ repeat: Infinity, duration: 0.5 + (i * 0.1), ease: "easeInOut" }} 
+                                                    className="w-2.5 bg-purple-500 rounded-full" 
+                                                />
+                                            ))}
+                                        </div>
+                                    ) : status === "LISTENING" ? (
+                                        <div className="relative flex items-center justify-center w-16 h-16">
+                                            <span className="absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-30 animate-ping"></span>
+                                            <span className="relative inline-flex rounded-full h-8 w-8 bg-red-500 shadow-[0_0_15px_rgba(239,68,68,0.7)]"></span>
+                                        </div>
+                                    ) : status === "THINKING..." || status === "PROCESSING AUDIO" ? (
+                                        <div className="flex items-center gap-2">
+                                            <span className="w-3.5 h-3.5 rounded-full bg-yellow-500 animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                                            <span className="w-3.5 h-3.5 rounded-full bg-yellow-500 animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                                            <span className="w-3.5 h-3.5 rounded-full bg-yellow-500 animate-bounce" style={{ animationDelay: '300ms' }}></span>
+                                        </div>
+                                    ) : (
+                                        <div className="flex flex-col items-center gap-2 text-zinc-500">
+                                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+                                                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                                                <line x1="12" x2="12" y1="19" y2="22"/>
+                                            </svg>
+                                            <span className="text-sm">Agent Idle</span>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
 
-                            <div className="h-[450px] bg-zinc-950 rounded-xl p-4 overflow-y-auto border border-zinc-800">
+                            <div className="h-[418px] bg-zinc-950 rounded-xl p-4 overflow-y-auto border border-zinc-800">
                                 <p className="text-zinc-300">
                                     {assistantResponse || <span className="text-zinc-500">Live transcript will appear here...</span>}
                                 </p>
                             </div>
                         </div>
-                    </div>
-                </section>
+                    </section>
+                </main>
 
             </div>
         </div>
